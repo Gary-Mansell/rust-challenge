@@ -1,5 +1,5 @@
 [package]
-name = "rust-examples"
+name = "rust-challenge"
 version = "0.1.0"
 authors = ["Gary Mansell <gary.mansell@cyberlytic.com>"]
 

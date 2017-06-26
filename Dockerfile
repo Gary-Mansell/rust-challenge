@@ -12,5 +12,7 @@ RUN /root/.cargo/bin/rustup target add x86_64-unknown-linux-musl
 
 ENV PATH=$PATH:/home/build/.cargo/bin:/root/.cargo/bin
 
+ADD . /home/build
+
 WORKDIR /home/build
 CMD ./build.sh

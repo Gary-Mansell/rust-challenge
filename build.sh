@@ -1,5 +1,5 @@
-#!/bin/sh
+#!/bin/sh -e
 
 cargo clean && cargo build
 echo "Executing..."
-./target/debug/rust-examples
+./target/debug/rust-challenge

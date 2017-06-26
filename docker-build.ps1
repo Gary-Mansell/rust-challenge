@@ -1,1 +1,1 @@
-docker build -t rust-examples:latest .
+docker build -t rust-challenge:latest .
