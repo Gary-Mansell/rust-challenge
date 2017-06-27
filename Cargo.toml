@@ -7,3 +7,4 @@ authors = ["Gary Mansell <gary.mansell@cyberlytic.com>"]
 futures = "0.1.14"
 hyper = "0.11.0"
 tokio-process = "0.1.3"
+tokio-io = "0.1"

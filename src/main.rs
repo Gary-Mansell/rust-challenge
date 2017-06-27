@@ -1,9 +1,12 @@
 extern crate hyper;
 extern crate futures;
+extern crate tokio_io;
 
 use hyper::header::{ContentLength, From};
 use hyper::server::{Http, Request, Response, Service};
 use hyper::{Method, StatusCode};
+use futures::Stream;
+use futures::future::{Future, Ok};
 
 static NOT_FOUND: &'static str = "NOT FOUND";
 
@@ -20,13 +23,25 @@ impl Service for RustService {
         match (request.method(), request.path()) {
             (&Method::Get, "/") => {
                 let text: &'static str = "This is a basic Rust web service.";
-                response.headers_mut().set(From("Moi!!".parse().unwrap()));
-                response.headers_mut().set(ContentLength(text.len() as u64));
+                response
+                    .headers_mut()
+                    .set(From("Moi!!".parse().unwrap()));
+                response
+                    .headers_mut()
+                    .set(ContentLength(text.len() as u64));
                 response.set_body(text);
-            },
+            }
             (&Method::Post, "/command") => {
-                response.set_body(request.body());
-            },
+                let value = request
+                    .body()
+                    .collect()
+                    .map(|chunks| {
+                             chunks
+                                 .iter()
+                                 .flat_map(|chunk| chunk.to_vec().clone())
+                                 .collect::<Vec<u8>>()
+                         });
+            }
             _ => {
                 response.set_body(NOT_FOUND);
                 response.set_status(StatusCode::NotFound);
