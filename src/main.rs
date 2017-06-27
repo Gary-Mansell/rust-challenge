@@ -32,14 +32,15 @@ impl Service for RustService {
                 response.set_body(text);
             }
             (&Method::Post, "/command") => {
-                let value = request
+                request
                     .body()
                     .collect()
                     .map(|chunks| {
-                             chunks
+                             let command = chunks
                                  .iter()
                                  .flat_map(|chunk| chunk.to_vec().clone())
-                                 .collect::<Vec<u8>>()
+                                 .collect::<Vec<u8>>();
+                             println!("Recieved command = {}", String::from_utf8(command).unwrap());
                          });
             }
             _ => {
