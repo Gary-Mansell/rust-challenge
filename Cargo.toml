@@ -13,6 +13,7 @@ rocket_codegen = "0.2.8"
 serde = "0.9"
 serde_json = "0.9"
 serde_derive = "0.9"
+tokio-process = "0.1.3"
 
 [dependencies.rocket_contrib]
 version = "*"
