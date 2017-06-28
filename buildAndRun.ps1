@@ -15,7 +15,7 @@ cargo build
 if ($execute) {
     Write-Host "Executing..." -ForegroundColor Green
     if (Test-Path $outputExe) {        
-        .\target\debug\rust-challenge.exe
+        cargo run
     } else {
         Write-Host "Failed!" -ForegroundColor Red
     }
