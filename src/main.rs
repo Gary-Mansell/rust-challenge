@@ -9,7 +9,7 @@ extern crate serde_derive;
 
 use rocket::{Request, State};
 use rocket_contrib::JSON;
-use std::cell::RefCell;
+use std::sync::{Mutex, Arc};
 
 #[derive(Deserialize)]
 struct Command {
@@ -25,9 +25,9 @@ fn index() -> &'static str {
 }
 
 #[get("/")]
-fn list(state: State<Vec<Command>>) -> &'static str {
-    // println!("Recieved: command = {}", state[0].command state.inner().0.command );
-    for task in state.iter() {
+fn list(state: State<Arc<Mutex<Vec<Command>>>>) -> &'static str {
+    let arc = state.inner().clone();
+    for task in arc.lock().unwrap().iter() {
         println!("command = {}", task.command);
     }
 
@@ -35,14 +35,15 @@ fn list(state: State<Vec<Command>>) -> &'static str {
 }
 
 #[post("/", format = "application/json", data = "<command_json>")]
-fn command(command_json: JSON<Command>, state: State<RefCell<Vec<Command>>>) -> &'static str {
+fn command(command_json: JSON<Command>, state: State<Arc<Mutex<Vec<Command>>>>) -> &'static str {
     println!("Recieved: command = {}, arguments = {:?}, cwd = {}, state = {}",
              command_json.command,
              command_json.arguments,
              command_json.cwd,
              command_json.state);
 
-    state.get_mut().push(command_json.into_inner());
+    let arc = state.inner().clone();
+    arc.lock().unwrap().push(command_json.into_inner());
     "success"
 }
 
@@ -51,11 +52,6 @@ fn not_found(request: &Request) -> &'static str {
     // println!("Request = {}," request.uri().as_str()); // error: no rules expected the token `request` ?
     "Not found!"
 }
-
-// #[get("/stream")]
-// fn stream() -> io::Result<Stream<UnixStream>> {
-//     UnixStream::connect("/path/to/my/socket").map(|s| Stream::from(s))
-// }
 
 fn main() {
     let mut commands: Vec<Command> = Vec::new();
@@ -76,11 +72,13 @@ fn main() {
     commands.push(command1);
     commands.push(command2);
 
+    let boxed = Arc::new(Mutex::new(commands));
+
     rocket::ignite()
         .mount("/", routes![index])
         .mount("/command", routes![command])
         .mount("/list", routes![list])
         .catch(errors![not_found])
-        .manage(commands)
+        .manage(boxed)
         .launch();
 }
