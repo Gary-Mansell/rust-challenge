@@ -17,28 +17,43 @@ use rocket::{Request, State};
 use rocket_contrib::JSON;
 use std::{thread, time};
 use std::sync::{Mutex, Arc};
-// use std::process::Command;
+use std::process::Command;
 use tokio_process::CommandExt;
 use futures::{Future, Stream, Async, Poll};
 use crossbeam::sync::chase_lev;
 
 // mod web {
 #[derive(Deserialize)]
-struct Command {
+struct Event {
     command: String,
     arguments: Vec<String>,
     cwd: String,
     state: String,
 }
 
-impl Command {
-    fn to_process(self) -> std::process::Command {
-        let command = std::process::Command::new(&self.command);
+impl Event {
+    fn to_process(self) -> Command {
+        let command = Command::new(&self.command);
         command.current_dir(&self.cwd);
         command.args(&self.arguments);
         return command;
     }
 }
+
+struct EventQueue(chase_lev::Stealer<Event>);
+struct Error;
+impl Stream for EventQueue {
+    type Item = Event;
+    type Error = Error;
+
+    fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
+        match self.0.steal() {
+            chase_lev::Steal::Data(event) => Ok(Async::Ready(Some(event))), // .to_process()
+            _ => Ok(Async::NotReady),
+        }
+    }
+}
+
 
 #[get("/")]
 fn index() -> &'static str {
@@ -46,7 +61,7 @@ fn index() -> &'static str {
 }
 
 #[get("/")]
-fn list(state: State<Arc<Mutex<Vec<Command>>>>) -> &'static str {
+fn list(state: State<Arc<Mutex<Vec<Event>>>>) -> &'static str {
     let arc = state.inner().clone();
     for task in arc.lock().unwrap().iter() {
         println!("command = {}", task.command);
@@ -56,7 +71,7 @@ fn list(state: State<Arc<Mutex<Vec<Command>>>>) -> &'static str {
 }
 
 #[post("/", format = "application/json", data = "<command_json>")]
-fn command(command_json: JSON<Command>, state: State<Arc<Mutex<Vec<Command>>>>) -> &'static str {
+fn command(command_json: JSON<Event>, state: State<Arc<Mutex<Vec<Event>>>>) -> &'static str {
     println!("Recieved: command = {}, arguments = {:?}, cwd = {}, state = {}",
              command_json.command,
              command_json.arguments,
@@ -76,47 +91,33 @@ fn not_found(request: &Request) -> &'static str {
 // }
 
 
-struct CommandQueue(chase_lev::Stealer<Command>);
-struct Error;
-impl Stream for CommandQueue {
-    type Item = std::process::Command;
-    type Error = Error;
-
-    fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
-        match self.0.steal() {
-            chase_lev::Steal::Data(event) => Ok(Async::Ready(Some(event.to_process()))),
-            _ => Ok(Async::NotReady),
-        }
-    }
-}
-
 fn main() {
-    let mut commands: Vec<Command> = Vec::new();
+    let mut events: Vec<Event> = Vec::new();
 
-    // Test commands
-    let command1 = Command {
+    // Test events
+    let event1 = Event {
         command: "echo".to_string(),
         arguments: vec!["hello".to_string(), "world".to_string()],
         cwd: "/tmp".to_string(),
         state: "running".to_string(),
     };
-    let command2 = Command {
+    let event2 = Event {
         command: "echo".to_string(),
         arguments: vec!["hello222".to_string(), "world222".to_string()],
         cwd: "/tmp".to_string(),
         state: "RUNNING".to_string(),
     };
-    let command3 = Command {
+    let event3 = Event {
         command: "echo".to_string(),
         arguments: vec!["hello333".to_string(), "world333".to_string()],
         cwd: "/tmp".to_string(),
         state: "stopped".to_string(),
     };
-    commands.push(command1);
-    commands.push(command2);
-    commands.push(command3);
+    events.push(event1);
+    events.push(event2);
+    events.push(event3);
 
-    let arc = Arc::new(Mutex::new(commands));
+    let arc = Arc::new(Mutex::new(events));
 
     let rocket = rocket::ignite()
         .mount("/", routes![index])
@@ -129,12 +130,15 @@ fn main() {
     let mut core = tokio_core::reactor::Core::new().unwrap();
     let handle = core.handle();
 
-    let process_manager = CommandQueue(stealer).for_each(|command| {
-        println!("{:?}", command);
-        let spawnable = command.to_process().and_then(|success| {println!("success")}).or_else(|failed| {println!("failed")});
-        let something = handle.spawn(spawnable);
-        return something;
-        });
+    let process_manager =
+        EventQueue(stealer).for_each(|event| {
+                                         let spawnable = event
+                                             .to_process()
+                                             .spawn_async(&handle)
+                                             .and_then(|success| Ok("success"))
+                                             .or_else(|failed| Ok("fail"));
+                                         return spawnable;
+                                     });
     core.run(process_manager);
 
     rocket.launch();
