@@ -10,6 +10,8 @@ extern crate serde_json;
 extern crate serde_derive;
 extern crate tokio_core;
 extern crate tokio_process;
+extern crate futures;
+extern crate crossbeam;
 
 use rocket::{Request, State};
 use rocket_contrib::JSON;
@@ -17,7 +19,8 @@ use std::{thread, time};
 use std::sync::{Mutex, Arc};
 // use std::process::Command;
 use tokio_process::CommandExt;
-
+use futures::{Future, Stream, Async, Poll};
+use crossbeam::sync::chase_lev;
 
 // mod web {
 #[derive(Deserialize)]
@@ -26,6 +29,15 @@ struct Command {
     arguments: Vec<String>,
     cwd: String,
     state: String,
+}
+
+impl Command {
+    fn to_process(self) -> std::process::Command {
+        let command = std::process::Command::new(&self.command);
+        command.current_dir(&self.cwd);
+        command.args(&self.arguments);
+        return command;
+    }
 }
 
 #[get("/")]
@@ -63,6 +75,21 @@ fn not_found(request: &Request) -> &'static str {
 }
 // }
 
+
+struct CommandQueue(chase_lev::Stealer<Command>);
+struct Error;
+impl Stream for CommandQueue {
+    type Item = std::process::Command;
+    type Error = Error;
+
+    fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
+        match self.0.steal() {
+            chase_lev::Steal::Data(event) => Ok(Async::Ready(Some(event.to_process()))),
+            _ => Ok(Async::NotReady),
+        }
+    }
+}
+
 fn main() {
     let mut commands: Vec<Command> = Vec::new();
 
@@ -73,13 +100,21 @@ fn main() {
         cwd: "/tmp".to_string(),
         state: "running".to_string(),
     };
-    // let command2 = Command {
-    //     command: "path2".to_string(),
-    //     arguments: vec!["argument12".to_string(), "argument22".to_string()],
-    //     cwd: "workdir2".to_string(),
-    //     state: "running2".to_string(),
-    // };
+    let command2 = Command {
+        command: "echo".to_string(),
+        arguments: vec!["hello222".to_string(), "world222".to_string()],
+        cwd: "/tmp".to_string(),
+        state: "RUNNING".to_string(),
+    };
+    let command3 = Command {
+        command: "echo".to_string(),
+        arguments: vec!["hello333".to_string(), "world333".to_string()],
+        cwd: "/tmp".to_string(),
+        state: "stopped".to_string(),
+    };
     commands.push(command1);
+    commands.push(command2);
+    commands.push(command3);
 
     let arc = Arc::new(Mutex::new(commands));
 
@@ -90,36 +125,15 @@ fn main() {
         .catch(errors![not_found])
         .manage(arc.clone());
 
-    thread::spawn(move || {
-
-        let mut core = tokio_core::reactor::Core::new().unwrap();
-
-        // Supervisor event loop
-        loop {
-            println!("Process supervisor thread running...");
-            let arc = arc.clone(); // Shadowing
-            for task in arc.lock().unwrap().iter() {
-                println!("Command = {}", task.command);
-
-                let child = std::process::Command::new(task.command.clone())
-                    .current_dir(task.cwd.clone())
-                    .args(&task.arguments)
-                    .spawn_async(&core.handle());
-
-                let child = child.expect("Failed to execute command thread!");
-
-                match core.run(child) {
-                    Ok(status) => println!("Exit status: {}", status),
-                    Err(e) => panic!("Failed to wait for exit: {}", e),
-                }
-            }
-
-            let sleep_duration = time::Duration::new(5, 0); // s, ms
-            let now = time::Instant::now();
-            thread::sleep(sleep_duration);
-            println!("secs = {}", now.elapsed().as_secs());
-        }
-    });
+    let (worker, stealer) = chase_lev::deque();
+    let mut core = tokio_core::reactor::Core::new().unwrap();
+    let handle = core.handle();
+    let process_manager = CommandQueue(stealer).for_each(|process| {
+        let spawnable = process.and_then(|success| {println!("success")}).or_else(|failed| {println!("failed")});
+        let something = handle.spawn(spawnable);
+        return something;
+        });
+    core.run(process_manager);
 
     rocket.launch();
 }
