@@ -128,8 +128,10 @@ fn main() {
     let (worker, stealer) = chase_lev::deque();
     let mut core = tokio_core::reactor::Core::new().unwrap();
     let handle = core.handle();
-    let process_manager = CommandQueue(stealer).for_each(|process| {
-        let spawnable = process.and_then(|success| {println!("success")}).or_else(|failed| {println!("failed")});
+
+    let process_manager = CommandQueue(stealer).for_each(|command| {
+        println!("{:?}", command);
+        let spawnable = command.to_process().and_then(|success| {println!("success")}).or_else(|failed| {println!("failed")});
         let something = handle.spawn(spawnable);
         return something;
         });
