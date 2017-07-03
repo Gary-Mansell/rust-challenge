@@ -15,7 +15,6 @@ extern crate crossbeam;
 
 use rocket::{Request, State};
 use rocket_contrib::JSON;
-use std::{thread, time};
 use std::sync::{Mutex, Arc};
 use std::process::Command;
 use tokio_process::CommandExt;
@@ -33,7 +32,7 @@ struct Event {
 
 impl Event {
     fn to_process(self) -> Command {
-        let command = Command::new(&self.command);
+        let mut command = Command::new(&self.command);
         command.current_dir(&self.cwd);
         command.args(&self.arguments);
         return command;
@@ -113,8 +112,8 @@ fn main() {
         cwd: "/tmp".to_string(),
         state: "stopped".to_string(),
     };
-    events.push(event1);
-    events.push(event2);
+    // events.push(event1);
+    // events.push(event2);
     events.push(event3);
 
     let arc = Arc::new(Mutex::new(events));
@@ -126,18 +125,19 @@ fn main() {
         .catch(errors![not_found])
         .manage(arc.clone());
 
-    let (worker, stealer) = chase_lev::deque();
+    let (mut worker, stealer) = chase_lev::deque();
+    
     let mut core = tokio_core::reactor::Core::new().unwrap();
     let handle = core.handle();
 
     let process_manager = EventQueue(stealer).for_each(|event| {
-                        event.to_process()
-                                        .spawn_async(&handle)
-                                        .and_then(|success| Ok("success"))
-                                        .or_else(|failed| Ok("fail"));
-                                    });
-                        return futures::future::ok(());
+                       return event.to_process()
+                        .spawn_async(&handle)
+                        .and_then(|success| Ok(()))
+                        .or_else(|failed| Ok(()));
+    });
     core.run(process_manager);
+    worker.push(event1);
 
     rocket.launch();
 }
