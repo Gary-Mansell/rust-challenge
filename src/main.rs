@@ -35,7 +35,7 @@ impl Event {
         let mut command = Command::new(&self.command);
         command.current_dir(&self.cwd);
         command.args(&self.arguments);
-        return command;
+        command
     }
 }
 
@@ -114,12 +114,12 @@ fn main() {
     let handle = core.handle();
 
     let process_manager = EventQueue(stealer).for_each(|event| {
-        return event
-                   .to_process()
-                   .spawn_async(&handle)
-                   .and_then(|_success| Ok(()))
-                   .or_else(|_failed| Ok(()));
-    });
+                                                           event
+                                                               .to_process()
+                                                               .spawn_async(&handle)
+                                                               .and_then(|_success| Ok(()))
+                                                               .or_else(|_failed| Ok(()))
+                                                       });
     core.run(process_manager); //.expect("Failed to run process manager!");
     arc.lock().unwrap().push(event1);
 
