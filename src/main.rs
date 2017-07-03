@@ -17,6 +17,7 @@ use rocket::{Request, State};
 use rocket_contrib::JSON;
 use std::sync::{Mutex, Arc};
 use std::process::Command;
+use std::thread;
 use tokio_process::CommandExt;
 use futures::{Future, Stream, Async};
 use crossbeam::sync::chase_lev;
@@ -110,17 +111,21 @@ fn main() {
         .catch(errors![not_found])
         .manage(arc.clone());
 
-    let mut core = tokio_core::reactor::Core::new().unwrap();
-    let handle = core.handle();
+    thread::spawn(move || {
+        let mut core = tokio_core::reactor::Core::new().unwrap();
+        let handle = core.handle();
 
-    let process_manager = EventQueue(stealer).for_each(|event| {
-                                                           event
-                                                               .to_process()
-                                                               .spawn_async(&handle)
-                                                               .and_then(|_success| Ok(()))
-                                                               .or_else(|_failed| Ok(()))
-                                                       });
-    core.run(process_manager); //.expect("Failed to run process manager!");
+        let process_manager = EventQueue(stealer).for_each(|event| {
+                                                               event
+                                                                   .to_process()
+                                                                   .spawn_async(&handle)
+                                                                   .and_then(|_success| Ok(()))
+                                                                   .or_else(|_failed| Ok(()))
+                                                           });
+
+        core.run(process_manager); //.expect("Failed to run process manager!");
+    });
+
     arc.lock().unwrap().push(event1);
 
     rocket.launch();
