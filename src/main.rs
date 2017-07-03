@@ -70,7 +70,9 @@ fn list(state: State<Arc<Mutex<crossbeam::sync::chase_lev::Worker<Event>>>>) -> 
 }
 
 #[post("/", format = "application/json", data = "<command_json>")]
-fn command(command_json: JSON<Event>, state: State<Arc<Mutex<crossbeam::sync::chase_lev::Worker<Event>>>>) -> &'static str {
+fn command(command_json: JSON<Event>,
+           state: State<Arc<Mutex<crossbeam::sync::chase_lev::Worker<Event>>>>)
+           -> &'static str {
     println!("Recieved: command = {}, arguments = {:?}, cwd = {}, state = {}",
              command_json.command,
              command_json.arguments,
@@ -107,15 +109,16 @@ fn main() {
         .mount("/list", routes![list])
         .catch(errors![not_found])
         .manage(arc.clone());
-    
+
     let mut core = tokio_core::reactor::Core::new().unwrap();
     let handle = core.handle();
 
     let process_manager = EventQueue(stealer).for_each(|event| {
-                       return event.to_process()
-                        .spawn_async(&handle)
-                        .and_then(|_success| Ok(()))
-                        .or_else(|_failed| Ok(()));
+        return event
+                   .to_process()
+                   .spawn_async(&handle)
+                   .and_then(|_success| Ok(()))
+                   .or_else(|_failed| Ok(()));
     });
     core.run(process_manager); //.expect("Failed to run process manager!");
     arc.lock().unwrap().push(event1);
