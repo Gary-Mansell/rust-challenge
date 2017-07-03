@@ -130,15 +130,13 @@ fn main() {
     let mut core = tokio_core::reactor::Core::new().unwrap();
     let handle = core.handle();
 
-    let process_manager =
-        EventQueue(stealer).for_each(|event| {
-                                         let spawnable = event
-                                             .to_process()
-                                             .spawn_async(&handle)
-                                             .and_then(|success| Ok("success"))
-                                             .or_else(|failed| Ok("fail"));
-                                         return spawnable;
-                                     });
+    let process_manager = EventQueue(stealer).for_each(|event| {
+                        event.to_process()
+                                        .spawn_async(&handle)
+                                        .and_then(|success| Ok("success"))
+                                        .or_else(|failed| Ok("fail"));
+                                    });
+                        return futures::future::ok(());
     core.run(process_manager);
 
     rocket.launch();
