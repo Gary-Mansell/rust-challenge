@@ -18,7 +18,7 @@ use rocket_contrib::JSON;
 use std::sync::{Mutex, Arc};
 use std::process::Command;
 use tokio_process::CommandExt;
-use futures::{Future, Stream, Async, Poll};
+use futures::{Future, Stream, Async};
 use crossbeam::sync::chase_lev;
 
 // mod web {
@@ -60,17 +60,17 @@ fn index() -> &'static str {
 }
 
 #[get("/")]
-fn list(state: State<Arc<Mutex<Vec<Event>>>>) -> &'static str {
-    let arc = state.inner().clone();
-    for task in arc.lock().unwrap().iter() {
-        println!("command = {}", task.command);
-    }
+fn list(state: State<Arc<Mutex<crossbeam::sync::chase_lev::Worker<Event>>>>) -> &'static str {
+    // let arc = state.inner().clone();
+    // for task in arc.lock().unwrap().iter() {
+    //     println!("command = {}", task.command);
+    // }
 
     "Ok"
 }
 
 #[post("/", format = "application/json", data = "<command_json>")]
-fn command(command_json: JSON<Event>, state: State<Arc<Mutex<Vec<Event>>>>) -> &'static str {
+fn command(command_json: JSON<Event>, state: State<Arc<Mutex<crossbeam::sync::chase_lev::Worker<Event>>>>) -> &'static str {
     println!("Recieved: command = {}, arguments = {:?}, cwd = {}, state = {}",
              command_json.command,
              command_json.arguments,
@@ -91,41 +91,22 @@ fn not_found(request: &Request) -> &'static str {
 
 
 fn main() {
-    let mut events: Vec<Event> = Vec::new();
-
-    // Test events
+    // Test event
     let event1 = Event {
         command: "echo".to_string(),
         arguments: vec!["hello".to_string(), "world".to_string()],
         cwd: "/tmp".to_string(),
         state: "running".to_string(),
     };
-    let event2 = Event {
-        command: "echo".to_string(),
-        arguments: vec!["hello222".to_string(), "world222".to_string()],
-        cwd: "/tmp".to_string(),
-        state: "RUNNING".to_string(),
-    };
-    let event3 = Event {
-        command: "echo".to_string(),
-        arguments: vec!["hello333".to_string(), "world333".to_string()],
-        cwd: "/tmp".to_string(),
-        state: "stopped".to_string(),
-    };
-    // events.push(event1);
-    // events.push(event2);
-    events.push(event3);
 
-    let arc = Arc::new(Mutex::new(events));
-
+    let (worker, stealer) = chase_lev::deque();
+    let arc = Arc::new(Mutex::new(worker));
     let rocket = rocket::ignite()
         .mount("/", routes![index])
         .mount("/command", routes![command])
         .mount("/list", routes![list])
         .catch(errors![not_found])
         .manage(arc.clone());
-
-    let (mut worker, stealer) = chase_lev::deque();
     
     let mut core = tokio_core::reactor::Core::new().unwrap();
     let handle = core.handle();
@@ -133,11 +114,11 @@ fn main() {
     let process_manager = EventQueue(stealer).for_each(|event| {
                        return event.to_process()
                         .spawn_async(&handle)
-                        .and_then(|success| Ok(()))
-                        .or_else(|failed| Ok(()));
+                        .and_then(|_success| Ok(()))
+                        .or_else(|_failed| Ok(()));
     });
-    core.run(process_manager);
-    worker.push(event1);
+    core.run(process_manager); //.expect("Failed to run process manager!");
+    arc.lock().unwrap().push(event1);
 
     rocket.launch();
 }
