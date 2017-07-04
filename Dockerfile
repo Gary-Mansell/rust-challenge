@@ -2,9 +2,8 @@ FROM ubuntu:16.04
 
 EXPOSE 8000
 
-RUN apt-get update && \
-    apt-get upgrade -y && \
-    apt-get -y install wget curl build-essential && \
+RUN apt-get update && \    
+    apt-get -y install wget curl && \
     useradd build && \
     mkdir -p /home/build && \
     chown -R build:build /home/build

@@ -23,7 +23,7 @@ use futures::{Future, Stream, Async};
 use crossbeam::sync::chase_lev;
 
 // mod web {
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct Event {
     command: String,
     arguments: Vec<String>,
@@ -82,7 +82,7 @@ fn command(command_json: JSON<Event>,
 
     let arc = state.inner().clone();
     arc.lock().unwrap().push(command_json.into_inner());
-    "success"
+    "Command added"
 }
 
 #[error(404)]
@@ -96,14 +96,15 @@ fn not_found(request: &Request) -> &'static str {
 fn main() {
     // Test event
     let event1 = Event {
-        command: "echo".to_string(),
-        arguments: vec!["hello".to_string(), "world".to_string()],
-        cwd: "/tmp".to_string(),
+        command: "C:\\Windows\\System32\\cmd.exe".to_string(),
+        arguments: vec!["/c mkdir C:\\SHARED\\test11111".to_string()],
+        cwd: "C:\\Setup".to_string(),
         state: "running".to_string(),
     };
 
     let (worker, stealer) = chase_lev::deque();
     let arc = Arc::new(Mutex::new(worker));
+    let arc2 = arc.clone();
     let rocket = rocket::ignite()
         .mount("/", routes![index])
         .mount("/command", routes![command])
@@ -116,14 +117,32 @@ fn main() {
         let handle = core.handle();
 
         let process_manager = EventQueue(stealer).for_each(|event| {
-                                                               event
-                                                                   .to_process()
-                                                                   .spawn_async(&handle)
-                                                                   .and_then(|_success| Ok(()))
-                                                                   .or_else(|_failed| Ok(()))
-                                                           });
+            let arc3 = arc2.clone();
+            event
+                .clone()
+                .to_process()
+                .spawn_async(&handle)
+                .and_then(|_child| {
+                    println!("Spawned {:?}", _child.id());
+                    handle.spawn(_child
+                                     .and_then(move |_status| {
+                                                   println!("Success!");
+                                                //    arc3.lock().unwrap().push(event);
+                                                   Ok(())
+                                               })
+                                     .or_else(|_status| {
+                                                  println!("Failed!");
+                                                  Err(())
+                                              }));
+                    Ok(())
+                })
+                .or_else(|_failed| {
+                             println!("Failed");
+                             Ok(())
+                         })
+        });
 
-        core.run(process_manager); //.expect("Failed to run process manager!");
+        core.run(process_manager);
     });
 
     arc.lock().unwrap().push(event1);
