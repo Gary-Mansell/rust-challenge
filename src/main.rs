@@ -19,7 +19,8 @@ use std::sync::{Mutex, Arc};
 use std::process::Command;
 use std::thread;
 use tokio_process::CommandExt;
-use futures::{Future, Stream, Async};
+use futures::{Future, Stream, Async, Sink};
+use futures::sync::mpsc;
 use crossbeam::sync::chase_lev;
 
 // mod web {
@@ -40,28 +41,13 @@ impl Event {
     }
 }
 
-struct EventQueue(chase_lev::Stealer<Event>);
-struct Error;
-impl Stream for EventQueue {
-    type Item = Event;
-    type Error = Error;
-
-    fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
-        match self.0.steal() {
-            chase_lev::Steal::Data(event) => Ok(Async::Ready(Some(event))), // .to_process()
-            _ => Ok(Async::NotReady),
-        }
-    }
-}
-
-
 #[get("/")]
 fn index() -> &'static str {
     "This is a basic Rust web service."
 }
 
 #[get("/")]
-fn list(state: State<Arc<Mutex<crossbeam::sync::chase_lev::Worker<Event>>>>) -> &'static str {
+fn list(state: State<Arc<Mutex<mpsc::Sender<Event>>>>) -> &'static str {
     // let arc = state.inner().clone();
     // for task in arc.lock().unwrap().iter() {
     //     println!("command = {}", task.command);
@@ -72,7 +58,7 @@ fn list(state: State<Arc<Mutex<crossbeam::sync::chase_lev::Worker<Event>>>>) -> 
 
 #[post("/", format = "application/json", data = "<command_json>")]
 fn command(command_json: JSON<Event>,
-           state: State<Arc<Mutex<crossbeam::sync::chase_lev::Worker<Event>>>>)
+           state: State<Arc<Mutex<mpsc::Sender<Event>>>>)
            -> &'static str {
     println!("Recieved: command = {}, arguments = {:?}, cwd = {}, state = {}",
              command_json.command,
@@ -81,7 +67,7 @@ fn command(command_json: JSON<Event>,
              command_json.state);
 
     let arc = state.inner().clone();
-    arc.lock().unwrap().push(command_json.into_inner());
+    arc.lock().unwrap().start_send(command_json.into_inner());
     "Command added"
 }
 
@@ -96,28 +82,20 @@ fn not_found(request: &Request) -> &'static str {
 fn main() {
     // Test event
     let event1 = Event {
-        command: "C:\\Windows\\System32\\cmd.exe".to_string(),
-        arguments: vec!["/c mkdir C:\\SHARED\\test11111".to_string()],
-        cwd: "C:\\Setup".to_string(),
+        command: "/tmp/script.sh".to_string(),
+        arguments: vec![],
+        cwd: "/tmp".to_string(),
         state: "running".to_string(),
     };
 
-    let (worker, stealer) = chase_lev::deque();
-    let arc = Arc::new(Mutex::new(worker));
-    let arc2 = arc.clone();
-    let rocket = rocket::ignite()
-        .mount("/", routes![index])
-        .mount("/command", routes![command])
-        .mount("/list", routes![list])
-        .catch(errors![not_found])
-        .manage(arc.clone());
+    let (worker, stealer) = mpsc::channel(100);
+    let arc = Arc::new(Mutex::new(worker.clone()));
 
-    thread::spawn(move || {
+    let t1 = thread::spawn(move || {
         let mut core = tokio_core::reactor::Core::new().unwrap();
         let handle = core.handle();
 
-        let process_manager = EventQueue(stealer).for_each(|event| {
-            let arc3 = arc2.clone();
+        let process_manager = stealer.for_each(|event: Event| {
             event
                 .clone()
                 .to_process()
@@ -135,17 +113,26 @@ fn main() {
                                                   Err(())
                                               }));
                     Ok(())
-                })
-                .or_else(|_failed| {
-                             println!("Failed");
-                             Ok(())
-                         })
+                });
+
+            Ok(())
         });
 
-        core.run(process_manager);
+        let _ = core.run(process_manager);
+        println!("Done and dusted");
     });
 
-    arc.lock().unwrap().push(event1);
+    println!("Launching");
 
-    rocket.launch();
+    let t2 = thread::spawn(move || {
+    let rocket = rocket::ignite()
+        .mount("/", routes![index])
+        .mount("/command", routes![command])
+        .mount("/list", routes![list])
+        .catch(errors![not_found])
+        .manage(arc.clone())
+        .launch();
+    });
+
+    t1.join();
 }
