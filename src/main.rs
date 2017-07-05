@@ -19,9 +19,8 @@ use std::sync::{Mutex, Arc};
 use std::process::Command;
 use std::thread;
 use tokio_process::CommandExt;
-use futures::{Future, Stream, Async, Sink};
+use futures::{Future, Stream, Sink};
 use futures::sync::mpsc;
-use crossbeam::sync::chase_lev;
 
 // mod web {
 #[derive(Clone, Deserialize)]
@@ -46,16 +45,6 @@ fn index() -> &'static str {
     "This is a basic Rust web service."
 }
 
-#[get("/")]
-fn list(state: State<Arc<Mutex<mpsc::Sender<Event>>>>) -> &'static str {
-    // let arc = state.inner().clone();
-    // for task in arc.lock().unwrap().iter() {
-    //     println!("command = {}", task.command);
-    // }
-
-    "Ok"
-}
-
 #[post("/", format = "application/json", data = "<command_json>")]
 fn command(command_json: JSON<Event>,
            state: State<Arc<Mutex<mpsc::Sender<Event>>>>)
@@ -67,35 +56,33 @@ fn command(command_json: JSON<Event>,
              command_json.state);
 
     let arc = state.inner().clone();
-    arc.lock().unwrap().start_send(command_json.into_inner());
+    arc.lock()
+        .unwrap()
+        .start_send(command_json.into_inner())
+        .expect("Could not add to event to channel!");
     "Command added"
 }
 
 #[error(404)]
 fn not_found(request: &Request) -> &'static str {
-    // println!("Request = {}," request.uri().as_str()); // error: no rules expected the token `request` ?
+    // error: no rules expected the token `request` ?
+    // println!("Request = {}," request.uri().as_str());
     "Not found!"
 }
 // }
 
 
 fn main() {
-    // Test event
-    let event1 = Event {
-        command: "/tmp/script.sh".to_string(),
-        arguments: vec![],
-        cwd: "/tmp".to_string(),
-        state: "running".to_string(),
-    };
-
     let (worker, stealer) = mpsc::channel(100);
     let arc = Arc::new(Mutex::new(worker.clone()));
+    let arc2 = arc.clone();
 
     let t1 = thread::spawn(move || {
         let mut core = tokio_core::reactor::Core::new().unwrap();
         let handle = core.handle();
 
-        let process_manager = stealer.for_each(|event: Event| {
+        let process_manager = stealer.for_each(move |event: Event| {
+            let arc3 = arc2.clone();
             event
                 .clone()
                 .to_process()
@@ -105,7 +92,8 @@ fn main() {
                     handle.spawn(_child
                                      .and_then(move |_status| {
                                                    println!("Success!");
-                                                //    arc3.lock().unwrap().push(event);
+                                                   arc3.lock().unwrap().start_send(event)
+                                                   .expect("Could not add to event to channel!");
                                                    Ok(())
                                                })
                                      .or_else(|_status| {
@@ -113,26 +101,25 @@ fn main() {
                                                   Err(())
                                               }));
                     Ok(())
-                });
+                })
+                .expect("");
 
             Ok(())
         });
 
-        let _ = core.run(process_manager);
-        println!("Done and dusted");
+        core.run(process_manager)
+            .expect("Processor thread crashed!");
     });
 
-    println!("Launching");
-
-    let t2 = thread::spawn(move || {
-    let rocket = rocket::ignite()
-        .mount("/", routes![index])
-        .mount("/command", routes![command])
-        .mount("/list", routes![list])
-        .catch(errors![not_found])
-        .manage(arc.clone())
-        .launch();
+    thread::spawn(move || {
+        println!("Launching server...");
+        rocket::ignite()
+            .mount("/", routes![index])
+            .mount("/command", routes![command])
+            .catch(errors![not_found])
+            .manage(arc.clone())
+            .launch();
     });
 
-    t1.join();
+    t1.join().expect("Server thread crashed!");
 }
