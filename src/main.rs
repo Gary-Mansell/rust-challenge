@@ -18,6 +18,7 @@ use rocket_contrib::JSON;
 use std::sync::{Mutex, Arc};
 use std::process::Command;
 use std::thread;
+use std::collections::HashSet;
 use tokio_process::CommandExt;
 use futures::{Future, Stream, Sink};
 use futures::sync::mpsc;
@@ -55,8 +56,9 @@ fn command(command_json: JSON<Event>,
              command_json.cwd,
              command_json.state);
 
-    let arc = state.inner().clone();
-    arc.lock()
+    let worker_arc = state.inner().clone();
+    worker_arc
+        .lock()
         .unwrap()
         .start_send(command_json.into_inner())
         .expect("Could not add to event to channel!");
@@ -74,32 +76,40 @@ fn not_found(request: &Request) -> &'static str {
 
 fn main() {
     let (worker, stealer) = mpsc::channel(100);
-    let arc = Arc::new(Mutex::new(worker.clone()));
-    let arc2 = arc.clone();
+    let worker_arc = Arc::new(Mutex::new(worker.clone()));
+    let worker_arc_2 = worker_arc.clone();
+    let event_map_arc: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
 
     let t1 = thread::spawn(move || {
         let mut core = tokio_core::reactor::Core::new().unwrap();
         let handle = core.handle();
 
         let process_manager = stealer.for_each(move |event: Event| {
-            let arc3 = arc2.clone();
+            let worker_arc_3 = worker_arc_2.clone();
             event
                 .clone()
                 .to_process()
                 .spawn_async(&handle)
                 .and_then(|_child| {
                     println!("Spawned {:?}", _child.id());
-                    handle.spawn(_child
-                                     .and_then(move |_status| {
-                                                   println!("Success!");
-                                                   arc3.lock().unwrap().start_send(event)
-                                                   .expect("Could not add to event to channel!");
-                                                   Ok(())
-                                               })
-                                     .or_else(|_status| {
-                                                  println!("Failed!");
-                                                  Err(())
-                                              }));
+                    handle
+                        .spawn(_child
+                                   .and_then(move |_status| {
+                            println!("Success!");
+                            // if (event_map_arc.get(event)) {
+                            worker_arc_3
+                                .lock()
+                                .unwrap()
+                                .start_send(event)
+                                .expect("Could not add to event to channel!");
+                            // }
+                            Ok(())
+                        })
+                                   .or_else(|_status| {
+                                                println!("Failed!");
+                                                //   worker_arc_3.lock().unwrap().start_send(event);
+                                                Err(())
+                                            }));
                     Ok(())
                 })
                 .expect("");
@@ -117,7 +127,7 @@ fn main() {
             .mount("/", routes![index])
             .mount("/command", routes![command])
             .catch(errors![not_found])
-            .manage(arc.clone())
+            .manage(worker_arc.clone())
             .launch();
     });
 
