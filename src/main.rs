@@ -48,7 +48,8 @@ fn index() -> &'static str {
 
 #[post("/", format = "application/json", data = "<command_json>")]
 fn command(command_json: JSON<Event>,
-           state: State<Arc<Mutex<mpsc::Sender<Event>>>>)
+           worker_state: State<Arc<Mutex<mpsc::Sender<Event>>>>,
+           event_map_state: State<Arc<Mutex<HashSet<String>>>>)
            -> &'static str {
     println!("Recieved: command = {}, arguments = {:?}, cwd = {}, state = {}",
              command_json.command,
@@ -56,7 +57,31 @@ fn command(command_json: JSON<Event>,
              command_json.cwd,
              command_json.state);
 
-    let worker_arc = state.inner().clone();
+    let event_map_arc = event_map_state.inner().clone();
+    match command_json
+              .state
+              .clone()
+              .trim()
+              .to_lowercase()
+              .as_ref() {
+        "running" => {
+            println!("State running");
+            event_map_arc
+                .lock()
+                .unwrap()
+                .insert(command_json.command.clone());
+        }
+        "stopped" => {
+            println!("State stopped");
+            event_map_arc
+                .lock()
+                .unwrap()
+                .remove(&command_json.command);
+        }
+        _ => println!("Unhandled state"),
+    }
+
+    let worker_arc = worker_state.inner().clone();
     worker_arc
         .lock()
         .unwrap()
@@ -79,30 +104,31 @@ fn main() {
     let worker_arc = Arc::new(Mutex::new(worker.clone()));
     let worker_arc_2 = worker_arc.clone();
     let event_map_arc: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+    let event_map_arc_2 = event_map_arc.clone();
 
     let t1 = thread::spawn(move || {
         let mut core = tokio_core::reactor::Core::new().unwrap();
         let handle = core.handle();
 
-        let process_manager = stealer.for_each(move |event: Event| {
-            let worker_arc_3 = worker_arc_2.clone();
-            event
-                .clone()
-                .to_process()
-                .spawn_async(&handle)
-                .and_then(|_child| {
-                    println!("Spawned {:?}", _child.id());
-                    handle
-                        .spawn(_child
-                                   .and_then(move |_status| {
+        let process_manager =
+            stealer.for_each(move |event: Event| {
+                let worker_arc_3 = worker_arc_2.clone();
+                let event_map_arc_3 = event_map_arc_2.clone();
+                event
+                    .clone()
+                    .to_process()
+                    .spawn_async(&handle)
+                    .and_then(|_child| {
+                        println!("Spawned {:?}", _child.id());
+                        handle.spawn(_child.and_then(move |_status| {
                             println!("Success!");
-                            // if (event_map_arc.get(event)) {
-                            worker_arc_3
-                                .lock()
-                                .unwrap()
-                                .start_send(event)
-                                .expect("Could not add to event to channel!");
-                            // }
+                            if event_map_arc_3.lock().unwrap().contains(&event.command) {
+                                worker_arc_3
+                                    .lock()
+                                    .unwrap()
+                                    .start_send(event)
+                                    .expect("Could not add to event to channel!");
+                            }
                             Ok(())
                         })
                                    .or_else(|_status| {
@@ -110,12 +136,12 @@ fn main() {
                                                 //   worker_arc_3.lock().unwrap().start_send(event);
                                                 Err(())
                                             }));
-                    Ok(())
-                })
-                .expect("");
+                        Ok(())
+                    })
+                    .expect("");
 
-            Ok(())
-        });
+                Ok(())
+            });
 
         core.run(process_manager)
             .expect("Processor thread crashed!");
@@ -128,6 +154,7 @@ fn main() {
             .mount("/command", routes![command])
             .catch(errors![not_found])
             .manage(worker_arc.clone())
+            .manage(event_map_arc.clone())
             .launch();
     });
 
