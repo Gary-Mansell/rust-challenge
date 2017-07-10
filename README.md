@@ -29,5 +29,5 @@ For info the output of the technical challenge will be assessed based on the qua
 
 Because Rust has quite a steep learning curve, we don't expect you to provide a fully working solution if you choose that language. You should look at the following libraries to get started: https://crates.io/crates/rocket https://crates.io/crates/tokio-process and in particular https://tokio.rs/ . Good introductions to the language can be found at https://doc.rust-lang.org/book/second-edition/ (the official book) and https://github.com/nrc/r4cppp (Rust for C++ programmers).
 
-Go will have all the necessary utilities included in the standard library. Try using the last stable version, 1.8.
+Go and Python will have all the necessary utilities included in the standard library. Use the latest stable version.
 If you decide that a working solution in Go is easier after attempting one in Rust, please submit both so we can discuss your approach and the challenges.
