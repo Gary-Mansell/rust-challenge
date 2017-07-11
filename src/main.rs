@@ -8,25 +8,25 @@ extern crate rocket_contrib;
 extern crate serde_json;
 #[macro_use]
 extern crate serde_derive;
+extern crate crossbeam;
+extern crate futures;
 extern crate tokio_core;
 extern crate tokio_process;
-extern crate futures;
-extern crate crossbeam;
 
-use std::sync::{Mutex, Arc};
-use std::collections::HashSet;
-use tokio_process::CommandExt;
-use futures::{Future, Stream, Sink};
 use futures::sync::mpsc;
+use futures::{Future, Sink, Stream};
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
+use tokio_process::CommandExt;
 
 mod web {
+    use futures::sync::mpsc;
+    use futures::Sink;
     use rocket::{Request, State};
     use rocket_contrib::JSON;
-    use std::sync::{Mutex, Arc};
-    use std::process::Command;
     use std::collections::HashSet;
-    use futures::Sink;
-    use futures::sync::mpsc;
+    use std::process::Command;
+    use std::sync::{Arc, Mutex};
 
     #[derive(Clone, Deserialize, Debug)]
     pub struct Event {
@@ -51,23 +51,18 @@ mod web {
     }
 
     #[post("/", format = "application/json", data = "<command_json>")]
-    fn command(command_json: JSON<Event>,
-               worker_state: State<Arc<Mutex<mpsc::Sender<Event>>>>,
-               event_map_state: State<Arc<Mutex<HashSet<String>>>>)
-               -> &'static str {
-        println!("Recieved: command = {}, arguments = {:?}, cwd = {}, state = {}",
-                 command_json.command,
-                 command_json.arguments,
-                 command_json.cwd,
-                 command_json.state);
+    fn command(
+        command_json: JSON<Event>,
+        worker_state: State<Arc<Mutex<mpsc::Sender<Event>>>>,
+        event_map_state: State<Arc<Mutex<HashSet<String>>>>,
+    ) -> &'static str {
+        println!(
+            "Recieved: command = {}, arguments = {:?}, cwd = {}, state = {}",
+            command_json.command, command_json.arguments, command_json.cwd, command_json.state
+        );
 
         let event_map_arc = event_map_state.inner().clone();
-        match command_json
-                  .state
-                  .clone()
-                  .trim()
-                  .to_lowercase()
-                  .as_ref() {
+        match command_json.state.clone().trim().to_lowercase().as_ref() {
             "running" => {
                 println!("Executing command...");
                 event_map_arc
@@ -85,10 +80,7 @@ mod web {
             }
             "stopped" => {
                 println!("Ignoring command...(Stopping if already executing)");
-                event_map_arc
-                    .lock()
-                    .unwrap()
-                    .remove(&command_json.command);
+                event_map_arc.lock().unwrap().remove(&command_json.command);
                 "Ignoring command...(Stopping if already executing)"
             }
             _ => {
@@ -105,7 +97,6 @@ mod web {
         "Not found!"
     }
 }
-
 
 fn main() {
     let (worker, stealer) = mpsc::channel(100);
@@ -129,19 +120,21 @@ fn main() {
                 .to_process()
                 .spawn_async(&handle)
                 .and_then(|_child| {
-                    handle.spawn(_child
-                                     .and_then(move |_status| {
-                        println!("Command executed successfully! Running again...");
-                        if event_map_arc_3.lock().unwrap().contains(&event.command) {
-                            worker_arc_3.lock().unwrap().start_send(event);
-                        }
-                        Ok(())
-                    })
-                                     .or_else(move |_status| {
-                                                  println!("Command execution FAILED! Retrying...");
-                                                  worker_arc_4.lock().unwrap().start_send(event_2);
-                                                  Err(())
-                                              }));
+                    handle.spawn(
+                        _child
+                            .and_then(move |_status| {
+                                println!("Command executed successfully! Running again...");
+                                if event_map_arc_3.lock().unwrap().contains(&event.command) {
+                                    worker_arc_3.lock().unwrap().start_send(event);
+                                }
+                                Ok(())
+                            })
+                            .or_else(move |_status| {
+                                println!("Command execution FAILED! Retrying...");
+                                worker_arc_4.lock().unwrap().start_send(event_2);
+                                Err(())
+                            }),
+                    );
                     Ok(())
                 })
                 .expect("");
